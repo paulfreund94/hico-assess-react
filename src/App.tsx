@@ -10,6 +10,7 @@ import { useForm } from "react-hook-form";
 import axios from "axios";
 
 type user = {
+  _links?: { self: { href: string } };
   firstName: string;
   lastName: string;
   employeeId: number;
@@ -21,12 +22,24 @@ type user = {
 
 const fetchUsers = (): Promise<user[]> => {
   return axios
-    .get("http://localhost:8080/users")
+    .get("http://localhost:8080/users?size=1000")
     .then((x) => x.data._embedded.users);
 };
 
-const addUser = (user: user): Promise<void> => {
-  return axios.post("http//localhost:8080/users", user);
+const addUser = ({
+  user,
+  isAdd,
+  link,
+}: {
+  user: user;
+  isAdd: boolean;
+  link: string;
+}): Promise<void> => {
+  if (isAdd) {
+    return axios.post("http://localhost:8080/users", user);
+  } else {
+    return axios.put(link, user);
+  }
 };
 
 const enumToDisplay = (s: string): string => {
@@ -55,25 +68,36 @@ const colorToTailwindBGSafe = (s: string): string => {
 const hoverBackgroundProfile = (s: string): string => {
   switch (s) {
     case "GREEN":
-      return "hover:bg-green-400";
+      return "hover:bg-green-500";
     case "BLUE":
       return "hover:bg-blue-500";
     case "RED":
-      return "hover:bg-red-400";
+      return "hover:bg-red-500";
     case "DEFAULT":
-      return "hover:bg-gray-400";
+      return "hover:bg-gray-500";
   }
   return "";
 };
 
-const queryClient = new QueryClient();
+const makeAlphabetical = (s1: string) => {
+  return s1.replace(/[^a-zA-Z\s+]/gi, "");
+};
 
-const App = () => {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <Index />
-    </QueryClientProvider>
-  );
+const makeNumerical = (s1: string) => {
+  return s1.replace(/[^0-9]/gi, "");
+};
+
+const makeNumericalSpaced = (s1: string) => {
+  let intermediate = makeNumerical(s1);
+  let s = "";
+
+  for (let i = intermediate.length - 1; i >= 0; i--) {
+    s = intermediate[i] + s;
+    let j = intermediate.length - i;
+    if (j !== 1 && j % 3 === 0 && j !== intermediate.length) s = " " + s;
+  }
+
+  return s;
 };
 
 let defaultUserFormProps = {
@@ -84,12 +108,19 @@ let defaultUserFormProps = {
   salary: "",
   profile: "DEFAULT",
   employeeId: "",
+  isAdd: true,
+  link: "",
 };
 
 const Index = () => {
   const { data, error, isLoading } = useQuery("users", fetchUsers);
+  const [index, setIndex] = useState(0);
+
   const { mutate } = useMutation("userAdd", addUser, {
-    onSuccess: () => queryClient.invalidateQueries("users"),
+    onSuccess: () => {
+      queryClient.invalidateQueries("users");
+      setIndex((index) => index + 1);
+    },
   });
 
   const [selected, setSelected] = useState(-1);
@@ -106,7 +137,11 @@ const Index = () => {
       profile: selectedUser.color,
       employeeId: selectedUser.employeeId.toString(),
       mutate,
+      isAdd: false,
+      link: "",
     };
+    if (selectedUser._links)
+      userFormProps = { ...userFormProps, link: selectedUser._links.self.href };
   }
 
   return (
@@ -118,7 +153,10 @@ const Index = () => {
         selected={selected}
         setSelected={setSelected}
       />
-      <UserForm {...userFormProps} key={JSON.stringify(userFormProps)} />
+      <UserForm
+        {...userFormProps}
+        key={JSON.stringify(userFormProps) + index.toString()}
+      />
     </>
   );
 };
@@ -172,7 +210,7 @@ const ListUsers = ({
             <tr
               className={
                 selected === index
-                  ? colorToTailwindBG(x.color)
+                  ? "bg-blue-300"
                   : (index % 2 === 0 ? "bg-gray-100" : "bg-white") +
                     " cursor-pointer"
               }
@@ -212,27 +250,6 @@ const ListUsers = ({
   );
 };
 
-const makeAlphabetical = (s1: string) => {
-  return s1.replace(/[^a-zA-Z\s+]/gi, "");
-};
-
-const makeNumerical = (s1: string) => {
-  return s1.replace(/[^0-9]/gi, "");
-};
-
-const makeNumericalSpaced = (s1: string) => {
-  let intermediate = makeNumerical(s1);
-  let s = "";
-
-  for (let i = intermediate.length - 1; i >= 0; i--) {
-    s = intermediate[i] + s;
-    let j = intermediate.length - i;
-    if (j !== 1 && j % 3 === 0 && j !== intermediate.length) s = " " + s;
-  }
-
-  return s;
-};
-
 type userFormProps = {
   firstName: string;
   lastName: string;
@@ -241,7 +258,18 @@ type userFormProps = {
   salary: string;
   profile: string;
   employeeId: string;
-  mutate: Query.UseMutateFunction<void, unknown, user, unknown>;
+  link: string;
+  isAdd: boolean;
+  mutate: Query.UseMutateFunction<
+    void,
+    unknown,
+    {
+      user: user;
+      isAdd: boolean;
+      link: string;
+    },
+    unknown
+  >;
 };
 
 const UserForm = ({
@@ -252,15 +280,23 @@ const UserForm = ({
   salary,
   profile,
   employeeId,
+  mutate,
+  isAdd,
+  link,
 }: userFormProps) => {
-  const { register, handleSubmit, setValue } = useForm({
+  const {
+    register,
+    handleSubmit,
+    setValue,
+    formState: { errors },
+  } = useForm({
     reValidateMode: "onSubmit",
     defaultValues: {
       firstName,
       lastName,
       gender,
       salutation,
-      salary,
+      salary: makeNumericalSpaced(salary.toString()),
       profile,
       employeeId,
     },
@@ -286,7 +322,7 @@ const UserForm = ({
     setValue("gender", gender);
     setValue("salutation", salutation);
     setCurrentSalutation(salutation);
-    setValue("salary", salary);
+    setValue("salary", makeNumericalSpaced(salary.toString()));
     setValue("profile", profile);
     setCurrentProfile(profile);
     setValue("employeeId", employeeId);
@@ -294,18 +330,56 @@ const UserForm = ({
 
   let fullName = currentFirstName + " " + currentLastName;
 
+  let newUser = (data: {
+    firstName: string;
+    lastName: string;
+    gender: string;
+    salutation: string;
+    salary: string;
+    profile: string;
+    employeeId: string;
+  }) => {
+    let {
+      firstName,
+      lastName,
+      gender,
+      salutation,
+      salary: salaryStr,
+      profile: color,
+      employeeId: employeeIdStr,
+    } = data;
+
+    let grossSalary = salaryStr ? parseInt(makeNumerical(salaryStr)) : 0;
+    let employeeId = parseInt(employeeIdStr);
+
+    let user: user = {
+      firstName,
+      lastName,
+      gender,
+      salutation,
+      grossSalary,
+      employeeId,
+      color,
+    };
+
+    mutate({ user, isAdd, link });
+  };
+
   return (
     <div className="w-10/12 flex flex-col items-center justify-center mx-auto border border-gray-200 mt-20">
       <h2 className="font-bold mt-5 mb-2">{"Employee Information"}</h2>
       <form
         className="w-10/12"
-        onSubmit={handleSubmit((data) => console.log(data))}
+        onSubmit={handleSubmit((data) => newUser(data))}
       >
         <div className="mx-4 w-full my-4">
           <div className="w-60 ml-auto">
             <button
               className="bg-gray-300 hover:bg-gray-400 mx-2 px-4 rounded"
-              onClick={resetForm}
+              onClick={(e) => {
+                e.preventDefault();
+                resetForm();
+              }}
             >
               Cancel
             </button>
@@ -335,7 +409,9 @@ const UserForm = ({
                 type="text"
                 id="first-name"
                 className="border-black border w-64 h-6"
-                {...register("firstName")}
+                {...register("firstName", {
+                  required: "First name is required",
+                })}
                 onChange={({ target: { value: f } }) => {
                   let x = makeAlphabetical(f);
                   if (f !== x) {
@@ -344,6 +420,9 @@ const UserForm = ({
                   setFirstName(x);
                 }}
               ></input>
+              <div className="text-red-400 text-sm">
+                {errors.firstName && errors.firstName.message}
+              </div>
             </div>
 
             <div className="mt-4">
@@ -354,7 +433,7 @@ const UserForm = ({
                 type="text"
                 id="last-name"
                 className="border-black border w-64 h-6"
-                {...register("lastName")}
+                {...register("lastName", { required: "Last name is required" })}
                 onChange={({ target: { value: f } }) => {
                   let x = makeAlphabetical(f);
                   if (f !== x) {
@@ -363,6 +442,9 @@ const UserForm = ({
                   setLastName(x);
                 }}
               ></input>
+              <div className="text-red-400 text-sm">
+                {errors.lastName && errors.lastName.message}
+              </div>
             </div>
 
             <div className="mt-4">
@@ -450,7 +532,13 @@ const UserForm = ({
                 type="text"
                 id="employee-id"
                 className="border-black border w-64 h-6 appearance-none"
-                {...register("employeeId")}
+                {...register("employeeId", {
+                  required: "Employee Id is required",
+                  validate: (value) => {
+                    let v = parseInt(makeNumerical(value));
+                    return v < 2147483647 && v >= 0;
+                  },
+                })}
                 onChange={({ target: { value: f } }) => {
                   let x = makeNumerical(f);
                   if (f !== x) {
@@ -458,6 +546,10 @@ const UserForm = ({
                   }
                 }}
               ></input>
+              <div className="text-red-400 text-sm">
+                {errors.employeeId &&
+                  (errors.employeeId.message || "Employee Id must be in range")}
+              </div>
             </div>
           </div>
 
@@ -484,7 +576,12 @@ const UserForm = ({
                 type="text"
                 id="first-name"
                 className="border-black border w-72 h-6"
-                {...register("salary")}
+                {...register("salary", {
+                  validate: (value) => {
+                    let v = parseInt(makeNumerical(value));
+                    return v < 2147483647 && v >= 0;
+                  },
+                })}
                 onChange={({ target: { value: f } }) => {
                   let x = makeNumericalSpaced(f);
                   if (f !== x) {
@@ -492,6 +589,9 @@ const UserForm = ({
                   }
                 }}
               ></input>
+              <div className="text-red-400 text-sm">
+                {errors.salary && "Gross salary must be in range."}
+              </div>
             </div>
 
             <div className="mt-4 flex">
@@ -552,14 +652,14 @@ const UserForm = ({
   );
 };
 
-UserForm.defaultProps = {
-  firstName: "",
-  lastName: "",
-  gender: "M",
-  salutation: "MR",
-  salary: "",
-  profile: "DEFAULT",
-  employeeId: "",
+const queryClient = new QueryClient();
+
+const App = () => {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <Index />
+    </QueryClientProvider>
+  );
 };
 
 export default App;
