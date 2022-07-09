@@ -578,6 +578,7 @@ const UserForm = ({
                 className="border-black border w-72 h-6"
                 {...register("salary", {
                   validate: (value) => {
+                    if (value === "") return true;
                     let v = parseInt(makeNumerical(value));
                     return v < 2147483647 && v >= 0;
                   },
